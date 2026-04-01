@@ -745,6 +745,58 @@ class IDExpression(Node):
         ''', re.VERBOSE)
 
 
+class ParametersDeclarator(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'{re.escape(Keys.L_PAREN)}.*{re.escape(Keys.R_PAREN)}', re.VERBOSE)
+    
+    @staticmethod
+    def split_parameters(params_list: str):
+        if not params_list:
+            return []
+        result = []
+        buffer = ""
+        depth = 0
+        
+        params_list = params_list.lstrip(Keys.L_PAREN)
+        params_list = params_list.rstrip(Keys.R_PAREN)
+
+        for char in params_list:
+            if char in (Keys.L_ANG_BRACKET, Keys.L_PAREN):
+                depth += 1
+            elif char in (Keys.R_ANG_BRACKET, Keys.R_PAREN):
+                depth = max(depth - 1, 0)
+            elif char == Keys.SEPARATOR and depth == 0:
+                result.append(buffer.strip())
+                buffer = ""
+                continue
+
+            buffer += char
+
+        if buffer:
+            result.append(buffer.strip())
+
+        return result
+    
+    @lazyattr
+    def VOID(cls):
+        return cls(f'{Keys.L_PAREN}{Keys.VOID}{Keys.R_PAREN}')
+    
+    def __init__(self, string):
+        params = self.split_parameters(self.parse(string).group())
+        self.params_list = [TypeID(param) for param in params or [Keys.VOID]]
+    
+    def __getitem__(self, key):
+        return self.params_list[key]
+    
+    def __str__(self):
+        return (
+            f'{Keys.L_PAREN}'
+            f'{Keys.SEPARATOR.join([str(param) for param in self.params_list]).strip()}'
+            f'{Keys.R_PAREN}'
+        )
+
+
 class PtrAbstractDeclarator(Node):
     @lazyattr
     def regex(cls):
@@ -879,64 +931,6 @@ class FunctionClass(Node):
             f'{self.access or ''}{':' if self.access else ''}'
             f'{self.resolution if self.access and self.resolution else ''}'
         ).strip()
-
-
-class ParametersDeclarator(Node):
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'''
-            {re.escape(Keys.L_PAREN)}
-            (?P<paramsList>
-                (?:{TypeID.genericPattern})(?:\s*{Keys.SEPARATOR}\s*(?:{TypeID.genericPattern}))*
-            )?
-            {re.escape(Keys.R_PAREN)}
-        ''', re.VERBOSE)
-    
-    @staticmethod
-    def split_parameters(params_list: str):
-        if not params_list:
-            return []
-        result = []
-        buffer = ""
-        depth = 0
-        
-        params_list = params_list.lstrip(Keys.L_PAREN)
-        params_list = params_list.rstrip(Keys.R_PAREN)
-
-        for char in params_list:
-            if char in (Keys.L_ANG_BRACKET, Keys.L_PAREN):
-                depth += 1
-            elif char in (Keys.R_ANG_BRACKET, Keys.R_PAREN):
-                depth = max(depth - 1, 0)
-            elif char == Keys.SEPARATOR and depth == 0:
-                result.append(buffer.strip())
-                buffer = ""
-                continue
-
-            buffer += char
-
-        if buffer:
-            result.append(buffer.strip())
-
-        return result
-    
-    @lazyattr
-    def VOID(cls):
-        return cls(f'{Keys.L_PAREN}{Keys.VOID}{Keys.R_PAREN}')
-    
-    def __init__(self, string):
-        params = self.split_parameters(self.parse(string).group())
-        self.params_list = [TypeID(param) for param in params or [Keys.VOID]]
-    
-    def __getitem__(self, key):
-        return self.params_list[key]
-    
-    def __str__(self):
-        return (
-            f'{Keys.L_PAREN}'
-            f'{Keys.SEPARATOR.join([str(param) for param in self.params_list]).strip()}'
-            f'{Keys.R_PAREN}'
-        )
 
 
 class FuncNode(Node):
