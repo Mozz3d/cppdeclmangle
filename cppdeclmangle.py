@@ -1802,7 +1802,8 @@ arg_parser.add_argument("declarations", nargs='+', help='One or more quote encas
 
 def main(argv=None):
     args = arg_parser.parse_args(argv)
-    return dict((Declaration(decl), str(Mangler(decl))) for decl in args.declarations)
+    declarations = list(Declaration(decl_str) for decl_str in args.declarations)
+    return dict((decl, str(Mangler(decl))) for decl in declarations)
 
 if __name__ == "__main__":
     result = main()
