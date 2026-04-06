@@ -788,7 +788,11 @@ class PtrOperator(Node):
         self.ext_qualifiers = PtrExtQualifiers(match.group('ptrExtQuals') or Keys.PTR64) 
 
     def __str__(self):
-        return f'{self.ptr_to_member or ""}{self.operator} {self.cv_qualifiers or "\b"} {self.ext_qualifiers}'.strip()
+        return (
+            f"{self.ptr_to_member or ''}{self.operator}"
+            f"{f" {self.cv_qualifiers or ''}".strip()}"
+            f" {self.ext_qualifiers}"
+        )
     
     def isPtrToMember(self):
         return self.ptr_to_member is not None
@@ -1090,7 +1094,7 @@ class FunctionClass(Node):
         access = match.group('access')
         resolution = match.group('resolution')
         if access is None and resolution is not None:
-            return self.BUILD_ERROR
+            return self.BUILD_ERROR # can't have resolution spec without access spec
         self.access = AccessSpecifier(access) if access is not None else None
         self.resolution = ResolutionSpecifier(resolution) if resolution is not None else None
     
@@ -1254,7 +1258,7 @@ class MethodPrototype(FuncNode):
         )
         
         if self.isStatic() and self.instance_quals is not None:
-            raise RuntimeError(f"Static method cannot have instance qualifiers '{self.instance_quals}'")
+            return self.BUILD_ERROR # static method cannot have instance qualifiers
 
 
 class FunctionPrototype(FuncNode):
@@ -1374,8 +1378,8 @@ class PropertyDeclaration(VarNode):
         self.decl_type = TypeID(match.group('declType'))
         self.identifier = QualifiedID(match.group('identifier'))
         self.storage_quals = (
-            self.decl_type.ptr_declarator.operator.cv_qualifiers 
-            if self.decl_type.ptr_declarator
+            self.decl_type.declarator.operator.cv_qualifiers 
+            if self.decl_type.declarator and self.decl_type.declarator.isPtr()
             else self.decl_type.cv_qualifiers
         )
 
@@ -1397,8 +1401,8 @@ class VariableDeclaration(VarNode):
         self._class = VariableClass.GLOBAL
         self.decl_type = TypeID(match.group('declType'))
         self.storage_quals = (
-            self.decl_type.ptr_declarator.operator.cv_qualifiers 
-            if self.decl_type.ptr_declarator
+            self.decl_type.declarator.operator.cv_qualifiers 
+            if self.decl_type.declarator and self.decl_type.declarator.isPtr()
             else self.decl_type.cv_qualifiers
         )
         self.identifier = IDExpression(match.group('identifier')) 
@@ -1798,7 +1802,7 @@ arg_parser.add_argument("declarations", nargs='+', help='One or more quote encas
 
 def main(argv=None):
     args = arg_parser.parse_args(argv)
-    return dict((decl, str(Mangler(decl))) for decl in args.declarations)
+    return dict((Declaration(decl), str(Mangler(decl))) for decl in args.declarations)
 
 if __name__ == "__main__":
     result = main()
