@@ -681,7 +681,9 @@ class TypeID(Node):
                 self.declarator.isPtrToVolatile = True
     
     def __str__(self):
-        return f'{self.type_spec} {self.cv_qualifiers or ''}{self.declarator or ''}'.strip()
+        return (
+            f"{self.type_spec} {f'{self.cv_qualifiers} ' if self.cv_qualifiers else ''}{self.declarator or ''}".strip()
+        )
     
     def isElaborated(self):
         return isinstance(self.type_spec, ElaboratedTypeSpecifier)
@@ -789,9 +791,7 @@ class PtrOperator(Node):
 
     def __str__(self):
         return (
-            f"{self.ptr_to_member or ''}{self.operator}"
-            f"{f" {self.cv_qualifiers or ''}".strip()}"
-            f" {self.ext_qualifiers}"
+            f"{self.ptr_to_member or ''}{self.operator} {self.ext_qualifiers} {self.cv_qualifiers or ''}".strip()
         )
     
     def isPtrToMember(self):
