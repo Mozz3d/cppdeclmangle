@@ -230,7 +230,7 @@ class CVQualifiers(Node):
     
     @lazyattr
     def CONST_VOLATILE(cls):
-        return f'{Keys.CONST} {Keys.VOLATILE}'
+        return cls(f'{Keys.CONST} {Keys.VOLATILE}')
     
     def build(self, match):
         if len(set(match.groups())) < len(match.groups()):
@@ -743,7 +743,7 @@ class PtrOperator(Node):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
-            (?P<ptrToMemberOf>{NestedNameSpecifier.genericPattern})?
+            (?P<ptrToMember>{NestedNameSpecifier.genericPattern})?
             (?P<operator>{Keys.RVAL_REF}|{Keys.REF}|{re.escape(Keys.PTR)})\s*
             (?P<cvQuals>{CVQualifiers.genericPattern})?
             (?:\s+(?P<ptrExtQuals>{PtrExtQualifiers.genericPattern}))?
@@ -774,9 +774,9 @@ class PtrOperator(Node):
         return cls(Keys.RVAL_REF)
 
     def build(self, match):
-        self.ptr_to_member_of = (
-            NestedNameSpecifier(match.group('ptrToMemberOf')) 
-            if match.group('ptrToMemberOf') 
+        self.ptr_to_member = (
+            NestedNameSpecifier(match.group('ptrToMember')) 
+            if match.group('ptrToMember') 
             else None
         )
         self.operator = match.group('operator')
@@ -788,10 +788,10 @@ class PtrOperator(Node):
         self.ext_qualifiers = PtrExtQualifiers(match.group('ptrExtQuals') or Keys.PTR64) 
 
     def __str__(self):
-        return f'{self.ptr_to_member_of or ""}{self.operator} {self.cv_qualifiers or "\b"} {self.ext_qualifiers}'.strip()
+        return f'{self.ptr_to_member or ""}{self.operator} {self.cv_qualifiers or "\b"} {self.ext_qualifiers}'.strip()
     
     def isPtrToMember(self):
-        return self.ptr_to_member_of is not None
+        return self.ptr_to_member is not None
 
 
 class ConstructorID(Node):
@@ -1064,33 +1064,33 @@ class FunctionClass(Node):
     
     @lazyattr
     def PRIVATE_STATIC(cls):
-        return cls(Keys.PRIVATE + Keys.STATIC)
+        return cls(f'{Keys.PRIVATE} {Keys.STATIC}')
     
     @lazyattr
     def PROTECTED_STATIC(cls):
-        return cls(Keys.PROTECTED + Keys.STATIC)
+        return cls(f'{Keys.PROTECTED} {Keys.STATIC}')
     
     @lazyattr
     def PUBLIC_STATIC(cls):
-        return cls(Keys.PUBLIC + Keys.STATIC)
+        return cls(f'{Keys.PUBLIC} {Keys.STATIC}')
     
     @lazyattr
     def PRIVATE_VIRTUAL(cls):
-        return cls(Keys.PRIVATE + Keys.VIRTUAL)
+        return cls(f'{Keys.PRIVATE} {Keys.VIRTUAL}')
     
     @lazyattr
     def PROTECTED_VIRTUAL(cls):
-        return cls(Keys.PROTECTED + Keys.VIRTUAL)
+        return cls(f'{Keys.PROTECTED} {Keys.VIRTUAL}')
     
     @lazyattr
     def PUBLIC_VIRTUAL(cls):
-        return cls(Keys.PUBLIC + Keys.VIRTUAL)
+        return cls(f'{Keys.PUBLIC} {Keys.VIRTUAL}')
     
     def build(self, match):
         access = match.group('access')
         resolution = match.group('resolution')
         if access is None and resolution is not None:
-            return Node.BUILD_ERROR
+            return self.BUILD_ERROR
         self.access = AccessSpecifier(access) if access is not None else None
         self.resolution = ResolutionSpecifier(resolution) if resolution is not None else None
     
@@ -1299,15 +1299,15 @@ class VariableClass(Node):
     
     @lazyattr
     def PRIVATE_STATIC(cls):
-        return cls(Keys.PRIVATE + Keys.STATIC)
+        return cls(f'{Keys.PRIVATE} {Keys.STATIC}')
     
     @lazyattr
     def PROTECTED_STATIC(cls):
-        return cls(Keys.PROTECTED + Keys.STATIC)
+        return cls(f'{Keys.PROTECTED} {Keys.STATIC}')
     
     @lazyattr
     def PUBLIC_STATIC(cls):
-        return cls(Keys.PUBLIC + Keys.STATIC)
+        return cls(f'{Keys.PUBLIC} {Keys.STATIC}')
  
     def build(self, match):
         access = match.group('access')
