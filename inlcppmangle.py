@@ -50,6 +50,7 @@ class Keys:
     PTR = '*'
     REF = '&'
     RVAL_REF = '&&'
+    PTR32 = '__ptr32'
     PTR64 = '__ptr64'
  
     DESTRUCTOR = '~'
@@ -212,7 +213,7 @@ class CallConvention(Node):
         return self.specifier
 
 
-class CVQualifierSeq(Node):
+class CVQualifiers(Node):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
@@ -246,7 +247,7 @@ class CVQualifierSeq(Node):
         return self.qualifiers[key]
     
     def __add__(self, other):
-        return CVQualifierSeq(f'{self} {other}'.strip())
+        return CVQualifiers(f'{self} {other}'.strip())
     
     def __str__(self):
         return ' '.join(self.qualifiers).strip()
@@ -288,19 +289,17 @@ class TemplateArgsList(Node):
         result = []
         buffer = ""
         depth = 0
-
-        if args_list.startswith(Keys.L_ANG_BRACKET) and args_list.endswith(Keys.R_ANG_BRACKET):
-            args_list = args_list[1:-1]
-
-        for char in args_list:
-            if char == Keys.L_ANG_BRACKET:
+        
+        for char in args_list.lstrip(Keys.L_ANG_BRACKET).rstrip(Keys.R_ANG_BRACKET):
+            if char in (Keys.L_ANG_BRACKET, Keys.L_PAREN):
                 depth += 1
-            elif char == Keys.R_ANG_BRACKET:
+            elif char in (Keys.R_ANG_BRACKET, Keys.R_PAREN):
                 depth = max(depth - 1, 0)
             elif char == Keys.SEPARATOR and depth == 0:
                 result.append(buffer.strip())
                 buffer = ""
                 continue
+
             buffer += char
 
         if buffer:
@@ -321,7 +320,7 @@ class TemplateArgsList(Node):
     def __str__(self):
         return (
             f'{Keys.L_ANG_BRACKET}'
-            f'{f'{Keys.SEPARATOR} '.join(str(arg) for arg in self.args_list)}'
+            f'{f'{Keys.SEPARATOR}'.join(str(arg) for arg in self.args_list)}'
             f'{Keys.R_ANG_BRACKET}'
         )
 
@@ -344,6 +343,7 @@ class SimpleTemplateID(Node):
 
 class UnqualifiedID(Node):
     producers = (Identifier, SimpleTemplateID)
+
     @lazyattr
     def regex(cls):
         return re.compile(rf'(?:{Identifier.genericPattern})(?:{TemplateArgsList.genericPattern})?', re.VERBOSE)
@@ -659,30 +659,30 @@ class TypeID(Node):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
-            (?:(?P<lhCVQuals>{CVQualifierSeq.genericPattern})\s+)?
+            (?:(?P<lhCVQuals>{CVQualifiers.genericPattern})\s+)?
             (?P<typeSpecifier>{TypeSpecifier.genericPattern})
-            (?:\s+(?P<rhCVQuals>{CVQualifierSeq.genericPattern}))?
-            (?:\s*(?P<ptrDeclarator>{PtrAbstractDeclarator.genericPattern}))?
+            (?:\s+(?P<rhCVQuals>{CVQualifiers.genericPattern}))?
+            (?:\s*(?P<declarator>{AbstractDeclarator.genericPattern}))?
         ''', re.VERBOSE)
 
     def build(self, match):
         self.type_spec = TypeSpecifier(match.group('typeSpecifier'))
         cvQuals = f'{match.group('lhCVQuals') or ''} {match.group('rhCVQuals') or ''}'.strip()
-        self.cv_qualifiers = CVQualifierSeq(cvQuals) if cvQuals else None
-        self.ptr_declarator = (
-            PtrAbstractDeclarator(ptrDeclarator) 
-            if (ptrDeclarator := match.group('ptrDeclarator'))
+        self.cv_qualifiers = CVQualifiers(cvQuals) if cvQuals else None
+        self.declarator = (
+            AbstractDeclarator(declarator) 
+            if (declarator := match.group('declarator'))
             else None
         )
         
         if self.cv_qualifiers is not None and self.isPtr():
             if Keys.CONST in self.cv_qualifiers:
-                self.ptr_declarator.isPtrToConst = True
+                self.declarator.isPtrToConst = True
             if Keys.VOLATILE in self.cv_qualifiers:
-                self.ptr_declarator.isPtrToVolatile = True
+                self.declarator.isPtrToVolatile = True
     
     def __str__(self):
-        return f'{self.type_spec} {self.cv_qualifiers or ''}{self.ptr_declarator or ''}'.strip()
+        return f'{self.type_spec} {self.cv_qualifiers or ''}{self.declarator or ''}'.strip()
     
     def isElaborated(self):
         return isinstance(self.type_spec, ElaboratedTypeSpecifier)
@@ -691,7 +691,7 @@ class TypeID(Node):
         return isinstance(self.type_spec, FundamentalTypeSpecifier)
     
     def isPtr(self):
-        return bool(self.ptr_declarator)
+        return isinstance(self.declarator, PtrAbstractDeclarator)
 
 
 class TemplateArgument(Node):
@@ -702,14 +702,52 @@ class TemplateArgument(Node):
         return re.compile(rf'{TypeID.genericPattern}|{ConstantExpression.genericPattern}', re.VERBOSE)
 
 
+class PtrExtendedQualifier(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'{Keys.PTR64}|{Keys.PTR32}', re.VERBOSE)
+
+    def build(self, match):
+        self.qualifier = match.group()
+    
+    @lazyattr
+    def PTR64(cls):
+        return cls(Keys.PTR64)
+    
+    def __str__(self):
+        return self.qualifier
+
+
+class PtrExtQualifiers(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'(?:({PtrExtendedQualifier.genericPattern})\s*)*', re.VERBOSE)
+    
+    def build(self, match):
+        if len(set(match.groups())) < len(match.groups()):
+            return self.BUILD_ERROR
+        
+        self.qualifiers = [PtrExtendedQualifier(qual) for qual in match.groups() if qual]
+
+    def __iter__(self):
+        for i in range(len(self.qualifiers)) :
+            yield self.qualifiers[i]
+    
+    def __getitem__(self, key):
+        return self.qualifiers[key]
+    
+    def __str__(self):
+        return ' '.join(map(str, self)).strip()
+
+
 class PtrOperator(Node):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
             (?P<ptrToMemberOf>{NestedNameSpecifier.genericPattern})?
             (?P<operator>{Keys.RVAL_REF}|{Keys.REF}|{re.escape(Keys.PTR)})\s*
-            (?P<cvQualSeq>{CVQualifierSeq.genericPattern})?
-            (?:\s+{Keys.PTR64})? # All pointers are assumed to be 64 bits
+            (?P<cvQuals>{CVQualifiers.genericPattern})?
+            (?:\s+(?P<ptrExtQuals>{PtrExtQualifiers.genericPattern}))?
         ''', re.VERBOSE)
 
     @lazyattr
@@ -744,13 +782,17 @@ class PtrOperator(Node):
         )
         self.operator = match.group('operator')
         self.cv_qualifiers = (
-            CVQualifierSeq(cvQualSeq) 
-            if (cvQualSeq := match.group('cvQualSeq') and self.operator == Keys.PTR)
+            CVQualifiers(cvQuals) 
+            if (cvQuals := match.group('cvQuals')) and self.operator == Keys.PTR
             else None
         )
+        self.ext_qualifiers = PtrExtQualifiers(match.group('ptrExtQuals') or Keys.PTR64) 
 
     def __str__(self):
-        return f'{self.ptr_to_member_of or ''}{self.operator} {self.cv_qualifiers or ''}'.strip()
+        return f'{self.ptr_to_member_of or ""}{self.operator} {self.cv_qualifiers or "\b"} {self.ext_qualifiers}'.strip()
+    
+    def isPtrToMember(self):
+        return self.ptr_to_member_of is not None
 
 
 class ConstructorID(Node):
@@ -866,9 +908,7 @@ class ParametersDeclarator(Node):
         buffer = ""
         depth = 0
         
-        params_list = params_list.lstrip(Keys.L_PAREN).rstrip(Keys.R_PAREN)
-
-        for char in params_list:
+        for char in params_list.lstrip(Keys.L_PAREN).rstrip(Keys.R_PAREN):
             if char in (Keys.L_ANG_BRACKET, Keys.L_PAREN):
                 depth += 1
             elif char in (Keys.R_ANG_BRACKET, Keys.R_PAREN):
@@ -907,70 +947,93 @@ class ParametersDeclarator(Node):
 class PtrAbstractDeclarator(Node):
     @lazyattr
     def regex(cls):
-        return re.compile(rf'(?:{PtrOperator.genericPattern}\s*)+', re.VERBOSE)
+        return re.compile(rf'''
+            (?P<ptrOps>(?:{PtrOperator.genericPattern}\s*)+)
+            (?P<noPtr>{NoPtrAbstractDeclarator.genericPattern})?'''
+        , re.VERBOSE)
     
     def build(self, match):
-        ptrOpMatches = PtrOperator.regex.findall(match.group())
+        ptrOpMatches = PtrOperator.regex.findall(match.group('ptrOps'))
         self.operator = PtrOperator(''.join(ptrOpMatches.pop()))
         
-        prevStr = ''.join(ptrOpMatches.pop()) if ptrOpMatches else None
+        prevStr = ''.join(''.join(m) for m in ptrOpMatches) if ptrOpMatches else None
         self.prev = PtrAbstractDeclarator(prevStr) if prevStr else None
+        self.no_ptr = (
+            NoPtrAbstractDeclarator(noPtr) 
+            if (noPtr := match.group('noPtr'))
+            else None
+        )
         
         self.isPtrToConst = False
         self.isPtrToVolatile = False
         
         if self.prev is not None and self.prev.operator.cv_qualifiers is not None:
-            if CVQualifierSeq.CONST in self.prev.operator.cv_qualifiers:
+            if CVQualifiers.CONST in self.prev.operator.cv_qualifiers:
                 self.isPtrToConst = True
-            if CVQualifierSeq.VOLATILE in self.prev.operator.cv_qualifiers:
+            if CVQualifiers.VOLATILE in self.prev.operator.cv_qualifiers:
                 self.isPtrToVolatile = True
 
     def __str__(self):
-        return f'{self.prev or ''} {self.operator}'.strip()
+        return f"{self.prev or ''} {self.operator}{self.no_ptr or ''}".strip()
 
 
-#class SubscriptOperator(Node):
-#    @lazyattr
-#    def regex(cls):
-#        return re.compile(rf'\{Keys.L_SQR_BRACKET}\s*(?P<constLen>\d*)\s*\{Keys.R_SQR_BRACKET}', re.VERBOSE)
-#    
-#    def __init__(self, string):
-#        self.length = match.group('constLen')
-#    
-#    def __str__(self):
-#        return f'{Keys.L_SQR_BRACKET}{self.length}{Keys.R_SQR_BRACKET}'
-#
-#
-#class ArrAbstractDeclarator(Node):
-#    @lazyattr
-#    def regex(cls):
-#        return re.compile(rf'''
-#            (?P<name>{TypeSpecifier.genericPattern})\s*
-#            (?P<operator>{SubscriptOperator.genericPattern})
-#        ''', re.VERBOSE)
-#    
-#    def __init__(self, string):
-#        self.type_spec = TypeSpecifier(match.group('name'))
-#        self.operator = SubscriptOperator(match.group('operator'))
-#    
-#    def __str__(self):
-#        return f'{self.type_spec}{self.operator}'
-#
-#
-#class NoptrAbstractDeclarator(Node):
-#    producers = (ArrAbstractDeclarator) #, ParametersDeclarator
-#    
-#    @lazyattr
-#    def regex(cls):
-#        return re.compile('|'.join(f'(?:{p.genericPattern})' for p in NoptrAbstractDeclarator.producers), re.VERBOSE)
-#
-#
-#class AbstractDeclarator:
-#    producers = (NoptrAbstractDeclarator, PtrAbstractDeclarator)
-#    
-#    @lazyattr
-#    def regex(cls):
-#        return re.compile('|'.join(f'(?:{p.genericPattern})' for p in AbstractDeclarator.producers), re.VERBOSE)
+class FuncAbstractDeclarator(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+            (?:(?P<callConv>{CallConvention.genericPattern})\s*)?
+            (?P<params>{ParametersDeclarator.genericPattern})
+        ''', re.VERBOSE)
+    
+    def build(self, match):
+        self.call_conv = (
+            CallConvention(callConv) 
+            if (callConv := match.group('callConv'))
+            else CallConvention.CDECL
+        )
+        self.params = ParametersDeclarator(match.group('params'))
+
+    def __str__(self):
+        return f'{self.call_conv}{self.params}'
+
+
+class FuncPtrAbstractDeclarator(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+            {re.escape(Keys.L_PAREN)}
+            (?:(?P<callConv>{CallConvention.genericPattern})\s*)?
+            (?P<ptrOps>(?:{PtrOperator.genericPattern}\s*)+)
+            {re.escape(Keys.R_PAREN)}
+            (?P<params>{ParametersDeclarator.genericPattern})
+        ''', re.VERBOSE)
+    
+    def build(self, match):
+        self.call_conv = (
+            CallConvention(callConv) 
+            if (callConv := match.group('callConv'))
+            else CallConvention.CDECL
+        )
+        self.ptr_declarator = PtrAbstractDeclarator(match.group('ptrOps'))
+        self.params = ParametersDeclarator(match.group('params'))
+
+    def __str__(self):
+        return f'({self.call_conv}{self.ptr_declarator}){self.params}'    
+
+class NoPtrAbstractDeclarator(Node):
+    producers = (FuncPtrAbstractDeclarator, FuncAbstractDeclarator)
+    
+    @lazyattr
+    def regex(cls):
+        return re.compile('|'.join(f'(?:{p.genericPattern})' for p in cls.producers), re.VERBOSE)
+
+
+class AbstractDeclarator(Node):
+    producers = (PtrAbstractDeclarator, NoPtrAbstractDeclarator)
+
+    @lazyattr
+    def regex(cls):
+        return re.compile('|'.join(f'(?:{p.genericPattern})' for p in cls.producers), re.VERBOSE)
 
 
 class FunctionClass(Node):
@@ -1052,16 +1115,9 @@ class FuncNode(Node):
   
     def isStatic(self):
         return self._class.resolution == ResolutionSpecifier.STATIC
-    
-    def isReturnByValue(self):
-        return (
-            self.return_type 
-            and self.return_type.isElaborated()
-            and not self.return_type.isPtr()
-        )
 
 
-class ConstructorDefinition(FuncNode):
+class ConstructorPrototype(FuncNode):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
@@ -1073,7 +1129,7 @@ class ConstructorDefinition(FuncNode):
             (?:(?P<callConv>{CallConvention.genericPattern})\s+)?
             (?P<identifier>{ConstructorID.genericPattern})\s*
             (?P<params>{ParametersDeclarator.genericPattern})
-            (?!\s*(?P<instanceQuals>{CVQualifierSeq.genericPattern}))?
+            (?!\s*(?P<instanceQuals>{CVQualifiers.genericPattern}))?
             (?:\s+{Keys.PTR64})?
         ''', re.VERBOSE)
 
@@ -1093,7 +1149,7 @@ class ConstructorDefinition(FuncNode):
             return self.BUILD_ERROR
 
 
-class DestructorDefinition(FuncNode):
+class DestructorPrototype(FuncNode):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
@@ -1106,7 +1162,7 @@ class DestructorDefinition(FuncNode):
             (?:(?P<callConv>{CallConvention.genericPattern})\s+)?
             (?P<identifier>{DestructorID.genericPattern})\s*
             (?P<params>{ParametersDeclarator.genericPattern})
-            (?!\s*(?P<instanceQuals>{CVQualifierSeq.genericPattern}))?
+            (?!\s*(?P<instanceQuals>{CVQualifiers.genericPattern}))?
             (?:\s+{Keys.PTR64})?
         ''', re.VERBOSE)
 
@@ -1130,7 +1186,7 @@ class DestructorDefinition(FuncNode):
             return self.BUILD_ERROR
 
 
-class OperatorFunctionDefinition(FuncNode):
+class OperatorFunctionPrototype(FuncNode):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
@@ -1142,7 +1198,7 @@ class OperatorFunctionDefinition(FuncNode):
             (?:(?P<callConv>{CallConvention.genericPattern})\s+)?
             (?P<identifier>{OperatorFunctionID.genericPattern})\s*
             (?P<params>{ParametersDeclarator.genericPattern})
-            (?:\s*(?P<instanceQuals>{CVQualifierSeq.genericPattern}))?
+            (?:\s*(?P<instanceQuals>{CVQualifiers.genericPattern}))?
             (?:\s+{Keys.PTR64})?
         ''', re.VERBOSE)
 
@@ -1157,14 +1213,14 @@ class OperatorFunctionDefinition(FuncNode):
         self.identifier = OperatorFunctionID(match.group('identifier'))
         self.params = ParametersDeclarator(match.group('params'))
         self.instance_quals = (
-            CVQualifierSeq(instanceQuals) 
+            CVQualifiers(instanceQuals) 
             if (instanceQuals := match.group('instanceQuals'))
             else None
         )
 
 
-class MethodDefinition(FuncNode):
-    producers = (ConstructorDefinition, DestructorDefinition, OperatorFunctionDefinition)
+class MethodPrototype(FuncNode):
+    producers = (ConstructorPrototype, DestructorPrototype, OperatorFunctionPrototype)
     
     @lazyattr
     def regex(cls):
@@ -1178,7 +1234,7 @@ class MethodDefinition(FuncNode):
             (?:(?P<callConv>{CallConvention.genericPattern})\s+)?
             (?P<identifier>{QualifiedID.genericPattern})\s*
             (?P<params>{ParametersDeclarator.genericPattern})
-            (?:\s*(?P<instanceQuals>{CVQualifierSeq.genericPattern}))?
+            (?:\s*(?P<instanceQuals>{CVQualifiers.genericPattern}))?
             (?:\s+{Keys.PTR64})?
         ''', re.VERBOSE)
     
@@ -1193,7 +1249,7 @@ class MethodDefinition(FuncNode):
         self.identifier = QualifiedID(match.group('identifier'))
         self.params = ParametersDeclarator(match.group('params'))
         self.instance_quals = (
-            CVQualifierSeq(instanceQuals) 
+            CVQualifiers(instanceQuals) 
             if (instanceQuals := match.group('instanceQuals'))
             else None
         )
@@ -1202,8 +1258,8 @@ class MethodDefinition(FuncNode):
             raise RuntimeError(f"Static method cannot have instance qualifiers '{self.instance_quals}'")
 
 
-class FunctionDefinition(FuncNode):
-    producers = (MethodDefinition,)
+class FunctionPrototype(FuncNode):
+    producers = (MethodPrototype,)
     
     @lazyattr
     def regex(cls):
@@ -1282,7 +1338,7 @@ class VarNode(Node):
         return self._class.resolution == ResolutionSpecifier.STATIC
 
 
-class ImplicitPropertyDefinition(VarNode):
+class ImplicitPropertyDeclaration(VarNode):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
@@ -1294,14 +1350,14 @@ class ImplicitPropertyDefinition(VarNode):
         self._class = None
         self.decl_type = None
         self.identifier = ImplicitPropertyID(match.group('identifier'))
-        self.storage_quals = CVQualifierSeq.CONST
+        self.storage_quals = CVQualifiers.CONST
     
     def __str__(self):
         return f'{Keys.CONST} {self.identifier}'
 
 
-class PropertyDefinition(VarNode):
-    producers = (ImplicitPropertyDefinition,)
+class PropertyDeclaration(VarNode):
+    producers = (ImplicitPropertyDeclaration,)
     
     @lazyattr
     def regex(cls):
@@ -1325,8 +1381,8 @@ class PropertyDefinition(VarNode):
         )
 
 
-class VariableDefinition(VarNode):
-    producers = (PropertyDefinition,)
+class VariableDeclaration(VarNode):
+    producers = (PropertyDeclaration,)
     
     @lazyattr
     def regex(cls):
@@ -1349,20 +1405,20 @@ class VariableDefinition(VarNode):
         self.identifier = IDExpression(match.group('identifier')) 
 
 
-class Definition(Node):
-    producers = (FunctionDefinition, VariableDefinition)
+class Declaration(Node):
+    producers = (FunctionPrototype, VariableDeclaration)
     @lazyattr
     def regex(cls):
         return re.compile('|'.join(f'(?:{p.genericPattern})' for p in cls.producers), re.VERBOSE)
 
 
 class Mangler:
-    def __init__(self, _def=None):
+    def __init__(self, decl=None):
         self.name_back_refs = []
-        if not _def:
+        if not decl:
             return
         
-        self.original = Definition(_def) if not isinstance(_def, Definition) else _def
+        self.original = Declaration(decl) if not isinstance(decl, Declaration) else decl
         self.result = self.mangle(self.original)
     
     def mangleFunctionClass(self, func_cls: FunctionClass):
@@ -1531,15 +1587,15 @@ class Mangler:
         result += self.mangleID(elaborated_type.type_name)
         return result
 
-    def mangleCVQualifiers(self, cv_quals: CVQualifierSeq):
+    def mangleCVQualifiers(self, cv_quals: CVQualifiers):
         match cv_quals:
             case None:
                 return 'A'
-            case CVQualifierSeq.CONST:
+            case CVQualifiers.CONST:
                 return 'B'
-            case CVQualifierSeq.VOLATILE:
+            case CVQualifiers.VOLATILE:
                 return 'C'
-            case CVQualifierSeq.CONST_VOLATILE:
+            case CVQualifiers.CONST_VOLATILE:
                 return 'D'
 
     def mangleCallConvention(self, call_conv: CallConvention):
@@ -1557,45 +1613,87 @@ class Mangler:
                 return self.mangleFundamentalType(type_spec)
             case ElaboratedTypeSpecifier():
                 return self.mangleElaboratedType(type_spec)
-
-    def manglePtrOperator(self, ptr_op: PtrOperator):
+    
+    def manglePtrExtQualifier(self, ptr_ext_qual: PtrExtendedQualifier):
+        match ptr_ext_qual:
+            case Keys.PTR64:
+                return 'E'
+    
+    def manglePtrExtQualifiers(self, ptr_ext_quals: PtrExtQualifiers):
+        return ''.join(self.manglePtrExtQualifier(qual) for qual in ptr_ext_quals)
+    
+    def manglePtrCVQualifiers(self, ptr_op: PtrOperator):
         match ptr_op:
             case PtrOperator.PTR:
-                return 'PE'
+                return 'P'
             case PtrOperator.PTR_CONST:
-                return 'QE'
+                return 'Q'
             case PtrOperator.PTR_VOLATILE:
-                return 'RE'
+                return 'R'
             case PtrOperator.PTR_CONST_VOLATILE:
-                return 'SE'
+                return 'S'
             case PtrOperator.REF:
-                return 'AE'
+                return 'A'
             case PtrOperator.RVAL_REF:
-                return '$$QE'
-
+                return '$$Q'
+    
     def manglePtrDeclarator(self, ptr_decl: PtrAbstractDeclarator):
-        result = self.manglePtrOperator(ptr_decl.operator)
+        result = self.manglePtrCVQualifiers(ptr_decl.operator)
+        result += self.manglePtrExtQualifiers(ptr_decl.operator.ext_qualifiers)
         result += self.mangleCVQualifiers(
-            CVQualifierSeq.CONST_VOLATILE if ptr_decl.isPtrToConst and ptr_decl.isPtrToVolatile
+            CVQualifiers.CONST_VOLATILE if ptr_decl.isPtrToConst and ptr_decl.isPtrToVolatile
             else 
-                CVQualifierSeq.CONST if ptr_decl.isPtrToConst
+                CVQualifiers.CONST if ptr_decl.isPtrToConst
             else
-                CVQualifierSeq.VOLATILE if ptr_decl.isPtrToVolatile
+                CVQualifiers.VOLATILE if ptr_decl.isPtrToVolatile
             else
                 None
         )
         
         if ptr_decl.prev:
             result += self.manglePtrDeclarator(ptr_decl.prev)
+        return result
+    
+    def mangleFuncDeclarator(self, func_decl: FuncAbstractDeclarator | FuncPtrAbstractDeclarator):
+        result = ''
+        if isinstance(func_decl, FuncPtrAbstractDeclarator):
+            result += self.manglePtrCVQualifiers(func_decl.ptr_declarator.operator)
+            if func_decl.ptr_declarator.operator.isPtrToMember():
+                result += '8'
+            else:
+                result += '6'
+        else:
+            result += '$$A6'
         
         return result
-
-    def mangleTypeID(self, type_ID: TypeID):
-        if not type_ID:
+    
+    def mangleNoPtrDeclarator(self, no_ptr_decl: NoPtrAbstractDeclarator):
+        return self.mangleFuncDeclarator(no_ptr_decl)
+    
+    def mangleDeclarator(self, declarator: AbstractDeclarator):
+        match declarator:
+            case PtrAbstractDeclarator():
+                return self.manglePtrDeclarator(declarator)
+            case NoPtrAbstractDeclarator():
+                return self.mangleNoPtrDeclarator(declarator)
+    
+    def mangleTypeID(self, type_id: TypeID):
+        if not type_id:
             return '@'
-
-        result = self.manglePtrDeclarator(type_ID.ptr_declarator) if type_ID.ptr_declarator else ''
-        result += self.mangleTypeSpec(type_ID.type_spec)
+        
+        result = ''
+        if decl := type_id.declarator:
+            result += self.mangleDeclarator(decl)
+            if (
+                isinstance(decl, FuncAbstractDeclarator) 
+                or 
+                isinstance(decl, FuncPtrAbstractDeclarator)
+            ):
+                ret_type = TypeID(f"{type_id.type_spec} {type_id.cv_qualifiers or ''}".rstrip())
+                result += self.mangleFunctionType(decl.call_conv, ret_type, decl.params)
+                return result
+        
+        result += self.mangleTypeSpec(type_id.type_spec)
         return result
     
     def mangleConstExpression(self, const_expr: ConstantExpression):
@@ -1620,29 +1718,38 @@ class Mangler:
                 return self.mangleTypeID(template_arg)
             case ConstantExpression():
                 return self.mangleConstExpression(template_arg)
+    
+    def mangleFunctionType(self, call_conv, ret_type, params):
+        result = self.mangleCallConvention(call_conv)
 
-    def mangleFunctionDef(self, func_def: FunctionDefinition):
-        result = self.mangleID(func_def.identifier)
-        result += self.mangleFunctionClass(func_def._class)
-
-        if not (func_def.isStatic() or func_def.isGlobal()):
-            result += 'E'
-            result += self.mangleCVQualifiers(func_def.instance_quals)
-
-        result += self.mangleCallConvention(func_def.call_conv)
+        if ret_type and ret_type.isElaborated() and not ret_type.isPtr():
+            result += '?' + self.mangleCVQualifiers(ret_type.cv_qualifiers)
+        result += self.mangleTypeID(ret_type)
         
-        if func_def.isReturnByValue():
-            result += '?' + self.mangleCVQualifiers(func_def.return_type.cv_qualifiers)
-
-        result += self.mangleTypeID(func_def.return_type)
+        param_back_refs = []
+        for param in params:
+            if param in param_back_refs:
+                result += str(param_back_refs.index(param))
+            else:
+                if len(param_back_refs) < 10:
+                    param_back_refs.append(param)
+                result += self.mangleTypeID(param)
         
-        for param in func_def.params:
-            result += self.mangleTypeID(param)
-        
-        if func_def.params != ParametersDeclarator.VOID:
+        if params != ParametersDeclarator.VOID:
             result += '@'
-        
+
         result += 'Z'
+        return result
+    
+    def mangleFunctionPrototype(self, func: FunctionPrototype):
+        result = self.mangleID(func.identifier)
+        result += self.mangleFunctionClass(func._class)
+
+        if not (func.isStatic() or func.isGlobal()):
+            result += 'E'
+            result += self.mangleCVQualifiers(func.instance_quals)
+        
+        result += self.mangleFunctionType(func.call_conv, func.return_type, func.params)
         return result
 
     def mangleVariableClass(self, var_cls: VariableClass):
@@ -1658,7 +1765,7 @@ class Mangler:
             case None:
                 return '6'
     
-    def mangleVariableDef(self, var_def: VariableDefinition):
+    def mangleVariableDeclaration(self, var_def: VariableDeclaration):
         result = self.mangleID(var_def.identifier)
         result += self.mangleVariableClass(var_def._class)
 
@@ -1673,13 +1780,13 @@ class Mangler:
         
         return result
     
-    def mangle(self, _def: Definition):
+    def mangle(self, decl: Declaration):
         result = '?'
-        match _def:
-            case FunctionDefinition():
-                result += self.mangleFunctionDef(_def)
-            case VariableDefinition():
-                result += self.mangleVariableDef(_def)
+        match decl:
+            case FunctionPrototype():
+                result += self.mangleFunctionPrototype(decl)
+            case VariableDeclaration():
+                result += self.mangleVariableDeclaration(decl)
         
         return result
     
@@ -1687,17 +1794,14 @@ class Mangler:
         return self.result
 
 
-arg_parser = argparse.ArgumentParser(description="Accepts inline C++ definitions for mangling and hashing")
-arg_parser.add_argument("definitions", nargs='+', help='One or more quote encased inline C++ definition, e.g. "public: void MyClass::myMethod(void*) const"')
-
-def mangle_defs(definitions):
-    return list(str(Mangler(_def)) for _def in definitions)
+arg_parser = argparse.ArgumentParser(description="Accepts C++ declarations for mangling and hashing")
+arg_parser.add_argument("declarations", nargs='+', help='One or more quote encased C++ declarations, e.g. "public: void MyClass::myMethod(void*) const"')
 
 def main(argv=None):
     args = arg_parser.parse_args(argv)
-    return mangle_defs(args.definitions)
+    return dict((decl, str(Mangler(decl))) for decl in args.declarations)
 
 if __name__ == "__main__":
     results = main()
-    for result in results:
-        print(result)
+    for (decl, mangled) in results.items():
+        print(f"\nMangling of :- \"{decl}\"\nis :- \"{mangled}\"")
