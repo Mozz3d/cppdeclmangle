@@ -1,1 +1,1 @@
-from .inlcppmangle import *
+from .cppdeclmangle import *
