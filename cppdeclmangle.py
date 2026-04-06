@@ -84,11 +84,10 @@ class Keys:
 class lazyattr: # lazy resolution class attribute
     def __init__(self, getter):
         self.getter = getter
-        self.name = getter.__name__
         
     def __get__(self, instance, owner):
         value = self.getter(owner)
-        setattr(owner, self.name, value)
+        setattr(owner,  self.getter.__name__, value)
         return value
 
 
@@ -1043,7 +1042,7 @@ class FunctionClass(Node):
             (?:
                 (?P<access>{AccessSpecifier.genericPattern})\s*
                 (?:\{Keys.ACCESS_SCOPE}\s*)?
-                (?P<res>{ResolutionSpecifier.genericPattern})?
+                (?P<resolution>{ResolutionSpecifier.genericPattern})?
             )?
         ''', re.VERBOSE)
     
@@ -1089,7 +1088,7 @@ class FunctionClass(Node):
     
     def build(self, match):
         access = match.group('access')
-        resolution = match.group('res')
+        resolution = match.group('resolution')
         if access is None and resolution is not None:
             return Node.BUILD_ERROR
         self.access = AccessSpecifier(access) if access is not None else None
@@ -1312,7 +1311,7 @@ class VariableClass(Node):
  
     def build(self, match):
         access = match.group('access')
-        resolution = match.group('res')
+        resolution = match.group('resolution')
         if access is None and resolution is not None:
             return Node.BUILD_ERROR
         self.access = AccessSpecifier(access) if access is not None else None
@@ -1802,6 +1801,6 @@ def main(argv=None):
     return dict((decl, str(Mangler(decl))) for decl in args.declarations)
 
 if __name__ == "__main__":
-    results = main()
-    for (decl, mangled) in results.items():
+    result = main()
+    for (decl, mangled) in result.items():
         print(f"\nMangling of :- \"{decl}\"\nis :- \"{mangled}\"")
