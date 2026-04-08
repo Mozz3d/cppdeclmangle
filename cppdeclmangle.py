@@ -87,7 +87,7 @@ class lazyattr: # lazy resolution class attribute
         
     def __get__(self, instance, owner):
         value = self.getter(owner)
-        setattr(owner,  self.getter.__name__, value)
+        setattr(owner, self.getter.__name__, value)
         return value
 
 
@@ -239,7 +239,7 @@ class CVQualifiers(Node):
         self.qualifiers = [cvQual for cvQual in match.groups() if cvQual]
 
     def __iter__(self):
-        for i in range(len(self.qualifiers)) :
+        for i in range(len(self.qualifiers)):
             yield self.qualifiers[i]
     
     def __getitem__(self, key):
@@ -262,90 +262,6 @@ class ConstantExpression(Node):
     
     def __str__(self):
         return self.value
-
-
-class Identifier(Node):
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'[_a-zA-Z][_a-zA-Z0-9]*', re.VERBOSE)
-
-    def build(self, match):
-        self.name = match.group()
-
-    def __str__(self):
-        return self.name
-
-
-class TemplateArgsList(Node):
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'{Keys.L_ANG_BRACKET}.*{Keys.R_ANG_BRACKET}', re.VERBOSE)
-
-    @staticmethod
-    def split_arguments(args_list: str):
-        if not args_list:
-            return []
-        result = []
-        buffer = ""
-        depth = 0
-        
-        for char in args_list.lstrip(Keys.L_ANG_BRACKET).rstrip(Keys.R_ANG_BRACKET):
-            if char in (Keys.L_ANG_BRACKET, Keys.L_PAREN):
-                depth += 1
-            elif char in (Keys.R_ANG_BRACKET, Keys.R_PAREN):
-                depth = max(depth - 1, 0)
-            elif char == Keys.SEPARATOR and depth == 0:
-                result.append(buffer.strip())
-                buffer = ""
-                continue
-
-            buffer += char
-
-        if buffer:
-            result.append(buffer.strip())
-
-        return result
-
-    def build(self, match):
-        args = self.split_arguments(match.group())
-        self.args_list = [TemplateArgument(arg) for arg in args]
-
-    def __len__(self):
-        return len(self.args_list)
-
-    def __getitem__(self, key):
-        return self.args_list[key]
-
-    def __str__(self):
-        return (
-            f'{Keys.L_ANG_BRACKET}'
-            f'{f'{Keys.SEPARATOR}'.join(str(arg) for arg in self.args_list)}'
-            f'{Keys.R_ANG_BRACKET}'
-        )
-
-
-class SimpleTemplateID(Node):
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'''
-            (?P<identifier>{Identifier.genericPattern})
-            (?P<argsList>{TemplateArgsList.genericPattern})
-        ''', re.VERBOSE)
-
-    def build(self, match):
-        self.identifier = Identifier(match.group('identifier'))
-        self.template_args_list = TemplateArgsList(match.group('argsList'))
-
-    def __str__(self):
-        return f"{self.identifier}{self.template_args_list}"
-
-
-class UnqualifiedID(Node):
-    producers = (Identifier, SimpleTemplateID)
-
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'(?:{Identifier.genericPattern})(?:{TemplateArgsList.genericPattern})?', re.VERBOSE)
 
 
 class OverloadableOperator(Node):
@@ -465,17 +381,114 @@ class OverloadableOperator(Node):
         return self.operator
 
 
+class Identifier(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'[_a-zA-Z][_a-zA-Z0-9]*', re.VERBOSE)
+
+    def build(self, match):
+        self.name = match.group()
+
+    def __str__(self):
+        return self.name
+
+
+class OperatorFunctionID(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+            (?P<scope>{NestedNameSpecifier.genericPattern})?
+            \b{Keys.OPERATOR}\s*\b
+            (?P<overloadableOp>{OverloadableOperator.genericPattern})
+        ''', re.VERBOSE)
+
+    def build(self, match):
+        self.scope = (
+            NestedNameSpecifier(scope)
+            if (scope := match.group('scope'))
+            else None
+        )
+        self.identifier = OverloadableOperator(match.group('overloadableOp'))
+
+    def __str__(self):
+        return f"{self.scope or ''}{Keys.OPERATOR} {self.identifier}"
+
+
+class TemplateArgsList(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'{Keys.L_ANG_BRACKET}.*{Keys.R_ANG_BRACKET}', re.VERBOSE)
+
+    @staticmethod
+    def split_arguments(args_list: str):
+        if not args_list:
+            return []
+        result = []
+        buffer = ""
+        depth = 0
+        
+        for char in args_list.lstrip(Keys.L_ANG_BRACKET).rstrip(Keys.R_ANG_BRACKET):
+            if char in (Keys.L_ANG_BRACKET, Keys.L_PAREN):
+                depth += 1
+            elif char in (Keys.R_ANG_BRACKET, Keys.R_PAREN):
+                depth = max(depth - 1, 0)
+            elif char == Keys.SEPARATOR and depth == 0:
+                result.append(buffer.strip())
+                buffer = ""
+                continue
+
+            buffer += char
+
+        if buffer:
+            result.append(buffer.strip())
+
+        return result
+
+    def build(self, match):
+        args = self.split_arguments(match.group())
+        self.args_list = [TemplateArgument(arg) for arg in args]
+
+    def __len__(self):
+        return len(self.args_list)
+
+    def __getitem__(self, key):
+        return self.args_list[key]
+
+    def __str__(self):
+        return (
+            f'{Keys.L_ANG_BRACKET}'
+            f'{f'{Keys.SEPARATOR}'.join(str(arg) for arg in self.args_list)}'
+            f'{Keys.R_ANG_BRACKET}'
+        )
+
+
+class SimpleTemplateID(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+            (?P<identifier>{Identifier.genericPattern})
+            (?P<argsList>{TemplateArgsList.genericPattern})
+        ''', re.VERBOSE)
+
+    def build(self, match):
+        self.identifier = Identifier(match.group('identifier'))
+        self.template_args_list = TemplateArgsList(match.group('argsList'))
+
+    def __str__(self):
+        return f"{self.identifier}{self.template_args_list}"
+
+
 class OperatorFunctionTemplateID(Node):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
             (?P<operatorFuncID>{OperatorFunctionID.genericPattern})
-            (?P<templateArgsList>{TemplateArgsList.genericPattern})
+            (?P<argsList>{TemplateArgsList.genericPattern})
         ''', re.VERBOSE)
 
     def build(self, match):
         self.operator = OverloadableOperator(match.group('operatorFuncID'))
-        self.template_args_list = TemplateArgsList(match.group('templateArgsList'))
+        self.template_args_list = TemplateArgsList(match.group('argsList'))
 
     def __str__(self):
         return f"operator{self.operator}{self.template_args_list}"
@@ -483,9 +496,32 @@ class OperatorFunctionTemplateID(Node):
 
 class TemplateID(Node):
     producers = (SimpleTemplateID, OperatorFunctionTemplateID)
+
     @lazyattr
     def regex(cls):
-        return re.compile('|'.join(f'(?:{p.genericPattern})' for p in cls.producers), re.VERBOSE)
+        return re.compile(rf'''
+            (?:
+                (?:{Identifier.genericPattern})
+                |
+                (?:\b{Keys.OPERATOR}\s*\b(?:{OverloadableOperator.genericPattern}))
+            )
+            (?:{TemplateArgsList.genericPattern})
+        ''', re.VERBOSE)
+
+
+class UnqualifiedID(Node):
+    producers = (Identifier, OperatorFunctionID, TemplateID)
+
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+            (?:
+                (?:{Identifier.genericPattern})
+                |
+                (?:\b{Keys.OPERATOR}\s*\b(?:{OverloadableOperator.genericPattern}))
+            )
+            (?:{TemplateArgsList.genericPattern})?
+        ''', re.VERBOSE)
 
 
 class NestedNameSpecifier(Node):
@@ -703,6 +739,90 @@ class TemplateArgument(Node):
         return re.compile(rf'{TypeID.genericPattern}|{ConstantExpression.genericPattern}', re.VERBOSE)
 
 
+class ConstructorID(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+                (?P<scope>{NestedNameSpecifier.genericPattern})
+                (?P<name>{UnqualifiedID.genericPattern})
+            ''', re.VERBOSE)
+
+    def build(self, match):
+        self.scope = NestedNameSpecifier(match.group('scope'))
+        self.identifier = UnqualifiedID(match.group('name'))
+        
+        if self.identifier != self.scope.identifier:
+            return self.BUILD_ERROR
+    
+    def __str__(self):
+        return f'{self.scope}{self.identifier}'
+
+
+class DestructorID(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+            (?P<scope>{NestedNameSpecifier.genericPattern})
+            {Keys.DESTRUCTOR}(?P<name>{UnqualifiedID.genericPattern})
+        ''', re.VERBOSE)
+    
+    def build(self, match):
+        self.scope = NestedNameSpecifier(match.group('scope'))
+        self.identifier = UnqualifiedID(match.group('name'))
+        
+        if self.identifier != self.scope.identifier:
+            return self.BUILD_ERROR
+    
+    def __str__(self):
+        return f'{self.scope}{Keys.DESTRUCTOR}{self.identifier}'
+
+
+class ImplicitPropertyID(Node):
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+            (?P<scope>{NestedNameSpecifier.genericPattern})
+            (?P<name>`{Keys.VFTABLE}'|{Keys.VFTABLE})
+        ''', re.VERBOSE)
+    
+    def build(self, match):
+        self.scope = NestedNameSpecifier(match.group('scope'))
+        self.identifier = Keys.VFTABLE
+    
+    def __str__(self):
+        return f"{self.scope}`{self.identifier}'"
+
+
+class QualifiedID(Node):
+    producers = (ConstructorID, DestructorID, OperatorFunctionID, ImplicitPropertyID)
+    
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+            (?P<scope>{NestedNameSpecifier.genericPattern})
+            (?P<name>{UnqualifiedID.genericPattern})
+        ''', re.VERBOSE)
+    
+    def build(self, match):
+        self.scope = NestedNameSpecifier(match.group('scope'))
+        self.identifier = UnqualifiedID(match.group('name'))
+    
+    def __str__(self):
+        return f'{self.scope}{self.identifier}'
+
+
+class IDExpression(Node):
+    producers = (UnqualifiedID, QualifiedID)
+
+    @lazyattr
+    def regex(cls):
+        return re.compile(rf'''
+            (?:{NestedNameSpecifier.genericPattern})?
+            (?:{Keys.DESTRUCTOR})?
+            {UnqualifiedID.genericPattern}
+        ''', re.VERBOSE)
+
+
 class PtrExtendedQualifier(Node):
     @lazyattr
     def regex(cls):
@@ -747,8 +867,8 @@ class PtrOperator(Node):
         return re.compile(rf'''
             (?P<ptrToMember>{NestedNameSpecifier.genericPattern})?
             (?P<operator>{Keys.RVAL_REF}|{Keys.REF}|{re.escape(Keys.PTR)})\s*
-            (?P<cvQuals>{CVQualifiers.genericPattern})?
-            (?:\s+(?P<ptrExtQuals>{PtrExtQualifiers.genericPattern}))?
+            (?:(?P<cvQuals>{CVQualifiers.genericPattern})\s*)?
+            (?P<ptrExtQuals>{PtrExtQualifiers.genericPattern})?
         ''', re.VERBOSE)
 
     @lazyattr
@@ -798,104 +918,39 @@ class PtrOperator(Node):
         return self.ptr_to_member is not None
 
 
-class ConstructorID(Node):
+class PtrAbstractDeclarator(Node):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
-                (?P<scope>{NestedNameSpecifier.genericPattern})
-                (?P<name>{UnqualifiedID.genericPattern})
-            ''', re.VERBOSE)
-
+            (?P<ptrOp>{PtrOperator.genericPattern})\s*
+            (?P<ptrOpSeq>(?:{PtrOperator.genericPattern}\s*)*)
+            (?P<noPtr>{NoPtrAbstractDeclarator.genericPattern})?
+        ''', re.VERBOSE)
+    
     def build(self, match):
-        self.scope = NestedNameSpecifier(match.group('scope'))
-        self.identifier = UnqualifiedID(match.group('name'))
+        self.operator = PtrOperator(match.group('ptrOp'))
+        self.prev = (
+            PtrAbstractDeclarator(ptrOpSeq) 
+            if (ptrOpSeq := match.group('ptrOpSeq')) 
+            else None
+        )
+        self.no_ptr = (
+            NoPtrAbstractDeclarator(noPtr) 
+            if (noPtr := match.group('noPtr'))
+            else None
+        )
         
-        if self.identifier != self.scope.identifier:
-            return self.BUILD_ERROR
-    
-    def __str__(self):
-        return f'{self.scope}{self.identifier}'
-
-
-class DestructorID(Node):
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'''
-            (?P<scope>{NestedNameSpecifier.genericPattern})
-            {Keys.DESTRUCTOR}(?P<name>{UnqualifiedID.genericPattern})
-        ''', re.VERBOSE)
-    
-    def build(self, match):
-        self.scope = NestedNameSpecifier(match.group('scope'))
-        self.identifier = UnqualifiedID(match.group('name'))
+        self.isPtrToConst = False
+        self.isPtrToVolatile = False
         
-        if self.identifier != self.scope.identifier:
-            return self.BUILD_ERROR
-    
-    def __str__(self):
-        return f'{self.scope}{Keys.DESTRUCTOR}{self.identifier}'
-
-
-class OperatorFunctionID(Node):
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'''
-            (?P<scope>{NestedNameSpecifier.genericPattern})
-            \b{Keys.OPERATOR}\s*\b
-            (?P<overloadableOp>{OverloadableOperator.genericPattern})
-        ''', re.VERBOSE)
-
-    def build(self, match):
-        self.scope = NestedNameSpecifier(match.group('scope'))
-        self.identifier = OverloadableOperator(match.group('overloadableOp'))
+        if self.prev is not None and self.prev.operator.cv_qualifiers is not None:
+            if CVQualifiers.CONST in self.prev.operator.cv_qualifiers:
+                self.isPtrToConst = True
+            if CVQualifiers.VOLATILE in self.prev.operator.cv_qualifiers:
+                self.isPtrToVolatile = True
 
     def __str__(self):
-        return f"{self.scope}{Keys.OPERATOR} {self.identifier}"
-
-
-class ImplicitPropertyID(Node):
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'''
-            (?P<scope>{NestedNameSpecifier.genericPattern})
-            (?P<name>`{Keys.VFTABLE}'|{Keys.VFTABLE})
-        ''', re.VERBOSE)
-    
-    def build(self, match):
-        self.scope = NestedNameSpecifier(match.group('scope'))
-        self.identifier = Keys.VFTABLE
-    
-    def __str__(self):
-        return f"{self.scope}`{self.identifier}'"
-
-
-class QualifiedID(Node):
-    producers = (ConstructorID, DestructorID, OperatorFunctionID, ImplicitPropertyID)
-    
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'''
-            (?P<scope>{NestedNameSpecifier.genericPattern})
-            (?P<name>{UnqualifiedID.genericPattern})
-        ''', re.VERBOSE)
-    
-    def build(self, match):
-        self.scope = NestedNameSpecifier(match.group('scope'))
-        self.identifier = UnqualifiedID(match.group('name'))
-    
-    def __str__(self):
-        return f'{self.scope}{self.identifier}'
-
-
-class IDExpression(Node):
-    producers = (UnqualifiedID, QualifiedID)
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'''
-            (?:{NestedNameSpecifier.genericPattern})?
-            (?:{Keys.DESTRUCTOR})?
-            {UnqualifiedID.genericPattern}
-        ''', re.VERBOSE)
+        return f"{self.prev or ''} {self.operator}{self.no_ptr or ''}".strip()
 
 
 class ParametersDeclarator(Node):
@@ -947,39 +1002,6 @@ class ParametersDeclarator(Node):
         )
 
 
-class PtrAbstractDeclarator(Node):
-    @lazyattr
-    def regex(cls):
-        return re.compile(rf'''
-            (?P<ptrOps>(?:{PtrOperator.genericPattern}\s*)+)
-            (?P<noPtr>{NoPtrAbstractDeclarator.genericPattern})?'''
-        , re.VERBOSE)
-    
-    def build(self, match):
-        ptrOpMatches = PtrOperator.regex.findall(match.group('ptrOps'))
-        self.operator = PtrOperator(''.join(ptrOpMatches.pop()))
-        
-        prevStr = ''.join(''.join(m) for m in ptrOpMatches) if ptrOpMatches else None
-        self.prev = PtrAbstractDeclarator(prevStr) if prevStr else None
-        self.no_ptr = (
-            NoPtrAbstractDeclarator(noPtr) 
-            if (noPtr := match.group('noPtr'))
-            else None
-        )
-        
-        self.isPtrToConst = False
-        self.isPtrToVolatile = False
-        
-        if self.prev is not None and self.prev.operator.cv_qualifiers is not None:
-            if CVQualifiers.CONST in self.prev.operator.cv_qualifiers:
-                self.isPtrToConst = True
-            if CVQualifiers.VOLATILE in self.prev.operator.cv_qualifiers:
-                self.isPtrToVolatile = True
-
-    def __str__(self):
-        return f"{self.prev or ''} {self.operator}{self.no_ptr or ''}".strip()
-
-
 class FuncAbstractDeclarator(Node):
     @lazyattr
     def regex(cls):
@@ -1022,6 +1044,7 @@ class FuncPtrAbstractDeclarator(Node):
 
     def __str__(self):
         return f'({self.call_conv}{self.ptr_declarator}){self.params}'    
+
 
 class NoPtrAbstractDeclarator(Node):
     producers = (FuncPtrAbstractDeclarator, FuncAbstractDeclarator)
@@ -1107,10 +1130,11 @@ class FunctionClass(Node):
 class FuncNode(Node):
     def __str__(self):
         return (
-            f'{self._class if self._class is not FunctionClass.GLOBAL else ''} '
-            f'{self.return_type or '\b'} {self.call_conv} '
-            f'{self.identifier}{self.params}'
-            f'{self.instance_quals or ''}'
+            f"{self._class if self._class is not FunctionClass.GLOBAL else ''} "
+            f"{self.return_type or '\b'} {self.call_conv} "
+            f"{self.identifier}{self.params} "
+            f"{getattr(self, 'instance_cv_quals', None) or '\b'} "
+            f"{getattr(self, 'instance_ext_quals', None) or ''}"
         ).strip()
     
     def isGlobal(self):
@@ -1132,8 +1156,8 @@ class ConstructorPrototype(FuncNode):
             (?:(?P<callConv>{CallConvention.genericPattern})\s+)?
             (?P<identifier>{ConstructorID.genericPattern})\s*
             (?P<params>{ParametersDeclarator.genericPattern})
-            (?!\s*(?P<instanceQuals>{CVQualifiers.genericPattern}))?
-            (?:\s+{Keys.PTR64})?
+            (?!\s*(?P<instCVQuals>{CVQualifiers.genericPattern}))?
+            (?:\s*(?P<instExtQuals>{PtrExtQualifiers.genericPattern}))?
         ''', re.VERBOSE)
 
     def build(self, match):
@@ -1146,7 +1170,8 @@ class ConstructorPrototype(FuncNode):
         )
         self.identifier = ConstructorID(match.group('identifier'))
         self.params = ParametersDeclarator(match.group('params'))
-        self.instance_quals = None
+        self.instance_cv_quals = None
+        self.instance_ext_quals = PtrExtQualifiers(match.group('instExtQuals') or Keys.PTR64)
         
         if self.identifier.identifier != self.identifier.scope.identifier:
             return self.BUILD_ERROR
@@ -1165,8 +1190,8 @@ class DestructorPrototype(FuncNode):
             (?:(?P<callConv>{CallConvention.genericPattern})\s+)?
             (?P<identifier>{DestructorID.genericPattern})\s*
             (?P<params>{ParametersDeclarator.genericPattern})
-            (?!\s*(?P<instanceQuals>{CVQualifiers.genericPattern}))?
-            (?:\s+{Keys.PTR64})?
+            (?!\s*(?P<instCVQuals>{CVQualifiers.genericPattern}))?
+            (?:\s*(?P<instExtQuals>{PtrExtQualifiers.genericPattern}))?
         ''', re.VERBOSE)
 
     def build(self, match):
@@ -1179,7 +1204,8 @@ class DestructorPrototype(FuncNode):
         )
         self.identifier = DestructorID(match.group('identifier'))
         self.params = ParametersDeclarator(match.group('params'))
-        self.instance_quals = None
+        self.instance_cv_quals = None
+        self.instance_ext_quals = PtrExtQualifiers(match.group('instExtQuals') or Keys.PTR64)
 
         if (
             self.identifier.scope.identifier != self.identifier.identifier
@@ -1189,7 +1215,7 @@ class DestructorPrototype(FuncNode):
             return self.BUILD_ERROR
 
 
-class OperatorFunctionPrototype(FuncNode):
+class OperatorMethodPrototype(FuncNode):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
@@ -1201,8 +1227,8 @@ class OperatorFunctionPrototype(FuncNode):
             (?:(?P<callConv>{CallConvention.genericPattern})\s+)?
             (?P<identifier>{OperatorFunctionID.genericPattern})\s*
             (?P<params>{ParametersDeclarator.genericPattern})
-            (?:\s*(?P<instanceQuals>{CVQualifiers.genericPattern}))?
-            (?:\s+{Keys.PTR64})?
+            (?:\s*(?P<instCVQuals>{CVQualifiers.genericPattern}))?
+            (?:\s*(?P<instExtQuals>{PtrExtQualifiers.genericPattern}))?
         ''', re.VERBOSE)
 
     def build(self, match):
@@ -1215,15 +1241,16 @@ class OperatorFunctionPrototype(FuncNode):
         )
         self.identifier = OperatorFunctionID(match.group('identifier'))
         self.params = ParametersDeclarator(match.group('params'))
-        self.instance_quals = (
-            CVQualifiers(instanceQuals) 
-            if (instanceQuals := match.group('instanceQuals'))
+        self.instance_cv_quals = (
+            CVQualifiers(instCVQuals) 
+            if (instCVQuals := match.group('instCVQuals'))
             else None
         )
+        self.instance_ext_quals = PtrExtQualifiers(match.group('instExtQuals') or Keys.PTR64)
 
 
 class MethodPrototype(FuncNode):
-    producers = (ConstructorPrototype, DestructorPrototype, OperatorFunctionPrototype)
+    producers = (ConstructorPrototype, DestructorPrototype, OperatorMethodPrototype)
     
     @lazyattr
     def regex(cls):
@@ -1237,8 +1264,8 @@ class MethodPrototype(FuncNode):
             (?:(?P<callConv>{CallConvention.genericPattern})\s+)?
             (?P<identifier>{QualifiedID.genericPattern})\s*
             (?P<params>{ParametersDeclarator.genericPattern})
-            (?:\s*(?P<instanceQuals>{CVQualifiers.genericPattern}))?
-            (?:\s+{Keys.PTR64})?
+            (?:\s*(?P<instCVQuals>{CVQualifiers.genericPattern}))?
+            (?:\s*(?P<instExtQuals>{PtrExtQualifiers.genericPattern}))?
         ''', re.VERBOSE)
     
     def build(self, match):
@@ -1251,11 +1278,12 @@ class MethodPrototype(FuncNode):
         )
         self.identifier = QualifiedID(match.group('identifier'))
         self.params = ParametersDeclarator(match.group('params'))
-        self.instance_quals = (
-            CVQualifiers(instanceQuals) 
-            if (instanceQuals := match.group('instanceQuals'))
+        self.instance_cv_quals = (
+            CVQualifiers(instCVQuals) 
+            if (instCVQuals := match.group('instCVQuals'))
             else None
         )
+        self.instance_ext_quals = PtrExtQualifiers(match.group('instExtQuals') or Keys.PTR64)
         
         if self.isStatic() and self.instance_quals is not None:
             return self.BUILD_ERROR # static method cannot have instance qualifiers
@@ -1283,7 +1311,6 @@ class FunctionPrototype(FuncNode):
         )
         self.identifier = IDExpression(match.group('identifier'))
         self.params = ParametersDeclarator(match.group('params'))
-        self.instance_quals = None
 
 
 class VariableClass(Node):
@@ -1410,6 +1437,7 @@ class VariableDeclaration(VarNode):
 
 class Declaration(Node):
     producers = (FunctionPrototype, VariableDeclaration)
+
     @lazyattr
     def regex(cls):
         return re.compile('|'.join(f'(?:{p.genericPattern})' for p in cls.producers), re.VERBOSE)
@@ -1539,8 +1567,8 @@ class Mangler:
             case _:
                 result = self.mangleUnqualifiedID(_id.identifier)
 
-        if hasattr(_id, 'scope'):
-            result += self.mangleScope(_id.scope)
+        if (scope := getattr(_id, 'scope', None)) is not None:
+            result += self.mangleScope(scope)
         return result + '@'
 
     def mangleFundamentalType(self, fundamental_type: FundamentalTypeSpecifier):
@@ -1749,8 +1777,8 @@ class Mangler:
         result += self.mangleFunctionClass(func._class)
 
         if not (func.isStatic() or func.isGlobal()):
-            result += 'E'
-            result += self.mangleCVQualifiers(func.instance_quals)
+            result += self.manglePtrExtQualifiers(func.instance_ext_quals)
+            result += self.mangleCVQualifiers(func.instance_cv_quals)
         
         result += self.mangleFunctionType(func.call_conv, func.return_type, func.params)
         return result
