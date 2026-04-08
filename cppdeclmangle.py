@@ -123,7 +123,7 @@ class Node(metaclass=MetaNode):
  
     @lazyattr
     def genericPattern(cls):
-        return re.sub(r'\(\?P<[^>]+>', '(?:', cls.regex.pattern)
+        return re.sub(r'\(\?P<\w+>', '(?:', cls.regex.pattern)
     
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -384,7 +384,7 @@ class OverloadableOperator(Node):
 class Identifier(Node):
     @lazyattr
     def regex(cls):
-        return re.compile(rf'[_a-zA-Z][_a-zA-Z0-9]*', re.VERBOSE)
+        return re.compile(rf'[_a-zA-Z]\w*', re.VERBOSE)
 
     def build(self, match):
         self.name = match.group()
@@ -501,11 +501,11 @@ class TemplateID(Node):
     def regex(cls):
         return re.compile(rf'''
             (?:
-                (?:{Identifier.genericPattern})
+                {Identifier.genericPattern}
                 |
-                (?:\b{Keys.OPERATOR}\s*\b(?:{OverloadableOperator.genericPattern}))
+                \b{Keys.OPERATOR}\s*\b{OverloadableOperator.genericPattern}
             )
-            (?:{TemplateArgsList.genericPattern})
+            {TemplateArgsList.genericPattern}
         ''', re.VERBOSE)
 
 
@@ -516,9 +516,9 @@ class UnqualifiedID(Node):
     def regex(cls):
         return re.compile(rf'''
             (?:
-                (?:{Identifier.genericPattern})
+                {Identifier.genericPattern}
                 |
-                (?:\b{Keys.OPERATOR}\s*\b(?:{OverloadableOperator.genericPattern}))
+                \b{Keys.OPERATOR}\s*\b{OverloadableOperator.genericPattern}
             )
             (?:{TemplateArgsList.genericPattern})?
         ''', re.VERBOSE)
@@ -561,7 +561,7 @@ class FundamentalTypeSpecifier(Node):
     @lazyattr
     def regex(cls):
         return re.compile(rf'''
-            (?:{Keys.VOID}|{Keys.BOOL}|{Keys.FLOAT}|{Keys.DOUBLE})
+            {Keys.VOID}|{Keys.BOOL}|{Keys.FLOAT}|{Keys.DOUBLE}
             |
             (?:(?P<signage>{Keys.SIGNED}|{Keys.UNSIGNED})\s+)?
             (?:{Keys.CHAR}|{Keys.WCHAR}|{Keys.SHORT}|{Keys.INT}|{Keys.LONG}|{Keys.INT64})
@@ -671,7 +671,7 @@ class ElaboratedTypeSpecifier(Node):
     def regex(cls):
         return re.compile(rf'''
             (?P<classKey>{ClassKey.genericPattern})\s+
-            (?P<name>(?:{NestedNameSpecifier.genericPattern})?(?:{UnqualifiedID.genericPattern}))
+            (?P<name>(?:{NestedNameSpecifier.genericPattern})?{UnqualifiedID.genericPattern})
         ''', re.VERBOSE)
 
     def build(self, match):
@@ -687,7 +687,7 @@ class TypeSpecifier(Node):
     
     @lazyattr
     def regex(cls):
-        return re.compile('|'.join(f'(?:{p.genericPattern})' for p in cls.producers), re.VERBOSE)
+        return re.compile('|'.join(f'{p.genericPattern}' for p in cls.producers), re.VERBOSE)
 
 
 class TypeID(Node):
@@ -1051,7 +1051,7 @@ class NoPtrAbstractDeclarator(Node):
     
     @lazyattr
     def regex(cls):
-        return re.compile('|'.join(f'(?:{p.genericPattern})' for p in cls.producers), re.VERBOSE)
+        return re.compile('|'.join(f'{p.genericPattern}' for p in cls.producers), re.VERBOSE)
 
 
 class AbstractDeclarator(Node):
@@ -1059,7 +1059,10 @@ class AbstractDeclarator(Node):
 
     @lazyattr
     def regex(cls):
-        return re.compile('|'.join(f'(?:{p.genericPattern})' for p in cls.producers), re.VERBOSE)
+        return re.compile(rf'''
+            (?:{PtrOperator.genericPattern}\s*(?:{PtrOperator.genericPattern}\s*)*)?
+            (?:{NoPtrAbstractDeclarator.genericPattern})?
+        ''', re.VERBOSE)
 
 
 class FunctionClass(Node):
@@ -1132,8 +1135,8 @@ class FuncNode(Node):
         return (
             f"{self._class if self._class is not FunctionClass.GLOBAL else ''} "
             f"{self.return_type or '\b'} {self.call_conv} "
-            f"{self.identifier}{self.params} "
-            f"{getattr(self, 'instance_cv_quals', None) or '\b'} "
+            f"{self.identifier}{self.params}"
+            f"{getattr(self, 'instance_cv_quals', None) or ''} "
             f"{getattr(self, 'instance_ext_quals', None) or ''}"
         ).strip()
     
@@ -1437,10 +1440,21 @@ class VariableDeclaration(VarNode):
 
 class Declaration(Node):
     producers = (FunctionPrototype, VariableDeclaration)
-
+    
     @lazyattr
     def regex(cls):
-        return re.compile('|'.join(f'(?:{p.genericPattern})' for p in cls.producers), re.VERBOSE)
+        return re.compile(rf'''
+            (?:{Keys.CONST}\s+)?
+            (?:{AccessSpecifier.genericPattern}\s*)?
+            (?:\{Keys.ACCESS_SCOPE}\s*)?
+            (?:{ResolutionSpecifier.genericPattern})?
+            {TypeID.genericPattern}\s+
+            (?:{CallConvention.genericPattern}\s+)?
+            {IDExpression.genericPattern}\s*
+            (?:{ParametersDeclarator.genericPattern})?
+            (?:\s*{CVQualifiers.genericPattern})?
+            (?:\s*{PtrExtQualifiers.genericPattern})?
+        ''', re.VERBOSE)
 
 
 class Mangler:
