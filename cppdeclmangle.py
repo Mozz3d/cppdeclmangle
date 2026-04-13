@@ -1159,7 +1159,6 @@ class ConstructorPrototype(FuncNode):
             (?:(?P<callConv>{CallConvention.genericPattern})\s+)?
             (?P<identifier>{ConstructorID.genericPattern})\s*
             (?P<params>{ParametersDeclarator.genericPattern})
-            (?!\s*(?P<instCVQuals>{CVQualifiers.genericPattern}))?
             (?:\s*(?P<instExtQuals>{PtrExtQualifiers.genericPattern}))?
         ''', re.VERBOSE)
 
@@ -1842,10 +1841,13 @@ class Mangler:
 arg_parser = argparse.ArgumentParser(description="Accepts C++ declarations for mangling and hashing")
 arg_parser.add_argument("declarations", nargs='+', help='One or more quote encased C++ declarations, e.g. "public: void MyClass::myMethod(void*) const"')
 
+def mangle_decls(decl_str_list):
+    declarations = list(Declaration(decl_str) for decl_str in decl_str_list)
+    return dict((decl, str(Mangler(decl))) for decl in declarations)
+
 def main(argv=None):
     args = arg_parser.parse_args(argv)
-    declarations = list(Declaration(decl_str) for decl_str in args.declarations)
-    return dict((decl, str(Mangler(decl))) for decl in declarations)
+    return mangle_decls(args.declarations)
 
 if __name__ == "__main__":
     result = main()
